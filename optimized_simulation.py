@@ -97,7 +97,7 @@ def run_simulation(radii_list,pillar_height,substrate_height=0,flip_stacking=Fal
             #calculate absorption
             cyl_abs = np.abs((cyl_fw2 - cyl_fw1 - (cyl_bw1 - cyl_bw2)) / inc)
             
-        file_path = '../plots/grid_data/grid_test1.csv' 
+        file_path = './plots/grid_data/grid_test1.csv' 
         append_simulation_results(file_path, pillar_height, [r1,r2,r3,r4], wl,
                                     transmission, reflectance, header)
         #store results
