@@ -56,6 +56,8 @@ def write_params_file(population, params_file):
 # Aggregate results from temporary files
 def aggregate_results(temp_dir, output_file):
     temp_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith('.csv')]
+    if not temp_files:
+        raise RuntimeError(f"No simulation output files found in {temp_dir}. Check for errors in the simulation tasks.")
     with open(output_file, 'w') as outfile:
         # Write header from the first file
         with open(temp_files[0], 'r') as infile:
@@ -81,7 +83,7 @@ def run_evolutionary_algorithm():
         # Run simulations in parallel using GNU parallel
         subprocess.run([
             "parallel", "--jobs", "128", "--bar", "--colsep", " ",
-            "python3 simulation_task.py --height {1} --r1 {2} --r2 {3} --r3 {4} --r4 {5} "
+            "python3 simulation_task.py --height {1} --r1 {2} --r2 {3} --r3 {4} --r4 {5} "ILE}"
             f"--output {TEMP_DIR}/temp_{{1}}_{{2}}_{{3}}_{{4}}_{{5}}.csv",
             ":::", PARAMS_FILE
         ])
