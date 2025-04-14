@@ -1,13 +1,14 @@
 import numpy as np
 import pandas as pd
-import subprocess
 import os
 from tqdm import tqdm
+import subprocess
 
 # Constants
 DATA_PATH = "../data/S4_pillar_sims/grid_data.csv"
 OUTPUT_DIR = "./evolution_results"
 TEMP_DIR = f"{OUTPUT_DIR}/temp"
+PARAMS_FILE = f"{TEMP_DIR}/params.txt"
 WAVELENGTH_RANGE = (3, 5)
 POPULATION_SIZE = 20
 GENERATIONS = 50
@@ -15,11 +16,9 @@ HEIGHT_RANGE = (1, 10)  # microns
 RADIUS_RANGE = (0.05 * 2.7, 0.45 * 2.7)  # microns
 
 # Fitness function: maximize transmission peak height and duration
-def fitness_function(transmission_values, wavelengths):
-    mask = (wavelengths >= WAVELENGTH_RANGE[0]) & (wavelengths <= WAVELENGTH_RANGE[1])
-    transmission_filtered = transmission_values[mask]
-    peak_height = np.max(transmission_filtered)
-    peak_duration = np.sum(transmission_filtered > 0.8 * peak_height)  # Duration above 80% of peak
+def fitness_function(transmission_values):
+    peak_height = np.max(transmission_values)
+    peak_duration = np.sum(transmission_values > 0.8 * peak_height)  # Duration above 80% of peak
     return peak_height + peak_duration
 
 # Generate initial population from grid data
@@ -47,23 +46,25 @@ def crossover(parent1, parent2):
     }
     return child
 
-# Evaluate fitness of a configuration
-def evaluate_fitness(config):
-    radii_args = " ".join(map(str, config['radii list']))
-    output_file = f"{TEMP_DIR}/temp_{config['height']}_{radii_args.replace(' ', '_')}.csv"
-    subprocess.run([
-        "python3", "simulation_task.py",
-        "--r1", str(config['radii list'][0]),
-        "--r2", str(config['radii list'][1]),
-        "--r3", str(config['radii list'][2]),
-        "--r4", str(config['radii list'][3]),
-        "--height", str(config['height']),
-        "--output", output_file
-    ])
-    data = pd.read_csv(output_file)
-    wavelengths = data['wavelength'].values
-    transmission = data['transmission'].values
-    return fitness_function(transmission, wavelengths)
+# Write configurations to a parameter file for parallel execution
+def write_params_file(population, params_file):
+    with open(params_file, 'w') as f:
+        for config in population:
+            radii_args = " ".join(map(str, config['radii list']))
+            f.write(f"{config['height']} {radii_args}\n")
+
+# Aggregate results from temporary files
+def aggregate_results(temp_dir, output_file):
+    temp_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith('.csv')]
+    with open(output_file, 'w') as outfile:
+        # Write header from the first file
+        with open(temp_files[0], 'r') as infile:
+            outfile.write(infile.readline())
+        # Append data from all files
+        for temp_file in temp_files:
+            with open(temp_file, 'r') as infile:
+                next(infile)  # Skip header
+                outfile.writelines(infile)
 
 # Run evolutionary algorithm
 def run_evolutionary_algorithm():
@@ -73,12 +74,29 @@ def run_evolutionary_algorithm():
 
     for generation in range(GENERATIONS):
         print(f"Generation {generation + 1}/{GENERATIONS}")
+
+        # Write population to params file
+        write_params_file(population, PARAMS_FILE)
+
+        # Run simulations in parallel using GNU parallel
+        subprocess.run([
+            "parallel", "--jobs", "128", "--bar", "--colsep", " ",
+            "python3 simulation_task.py --height {1} --r1 {2} --r2 {3} --r3 {4} --r4 {5} "
+            f"--output {TEMP_DIR}/temp_{{1}}_{{2}}_{{3}}_{{4}}_{{5}}.csv",
+            ":::", PARAMS_FILE
+        ])
+
+        # Aggregate results
+        generation_output = f"{OUTPUT_DIR}/generation_{generation + 1}.csv"
+        aggregate_results(TEMP_DIR, generation_output)
+
+        # Evaluate fitness and select top individuals
+        data = pd.read_csv(generation_output)
         fitness_scores = []
-        for config in tqdm(population):
-            fitness = evaluate_fitness(config)
-            fitness_scores.append((config, fitness))
-        
-        # Select top individuals
+        for _, row in data.iterrows():
+            transmission_values = np.array(eval(row['transmission']))
+            fitness = fitness_function(transmission_values)
+            fitness_scores.append((row, fitness))
         fitness_scores.sort(key=lambda x: x[1], reverse=True)
         top_individuals = [x[0] for x in fitness_scores[:POPULATION_SIZE // 2]]
 
@@ -91,12 +109,7 @@ def run_evolutionary_algorithm():
             else:  # Crossover
                 parent1, parent2 = np.random.choice(top_individuals, size=2, replace=False)
                 new_population.append(crossover(parent1, parent2))
-        
         population = new_population
-
-        # Save generation results
-        results = pd.DataFrame([{'height': ind['height'], 'radii list': ind['radii list']} for ind in population])
-        results.to_csv(f"{OUTPUT_DIR}/generation_{generation + 1}.csv", index=False)
 
     print("Evolutionary algorithm completed. Results saved to:", OUTPUT_DIR)
 
