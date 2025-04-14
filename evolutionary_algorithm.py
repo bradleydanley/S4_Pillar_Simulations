@@ -3,9 +3,10 @@ import pandas as pd
 import os
 from tqdm import tqdm
 import subprocess
+import ast
 
 # Constants
-DATA_PATH = "../data/S4_pillar_sims/grid_data.csv"
+DATA_PATH = "../data/grid_data.csv"
 OUTPUT_DIR = "./evolution_results"
 TEMP_DIR = f"{OUTPUT_DIR}/temp"
 PARAMS_FILE = f"{TEMP_DIR}/params.txt"
@@ -50,9 +51,26 @@ def crossover(parent1, parent2):
 def write_params_file(population, params_file):
     with open(params_file, 'w') as f:
         for config in population:
-            radii_args = " ".join(map(str, config['radii list']))
-            f.write(f"{config['height']} {radii_args}\n")
-
+            radii_list = config['radii list']
+            radii_args = " ".join(map(str, radii_list))
+            f.write(f"{radii_args} {config['height']}\n")
+"""
+# Run a single simulation
+def run_simulation_task(config, temp_dir):
+        radii_args = " ".join(map(str, config['radii list']))
+        output_file = f"{temp_dir}/temp_{'_'.join(map(str, config['radii list']))}_{config['height']}.csv"
+        config['radii list'] = ast.literal_eval(config['radii list'])
+        subprocess.run([
+            "python3", "simulation_task.py",
+            "--r1", str(config['radii list'][0]),
+            "--r2", str(config['radii list'][1]),
+            "--r3", str(config['radii list'][2]),
+            "--r4", str(config['radii list'][3]),
+            "--height", str(config['height']),
+            "--output", output_file
+            ])
+        return output_file
+"""
 # Aggregate results from temporary files
 def aggregate_results(temp_dir, output_file):
     temp_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith('.csv')]
@@ -76,29 +94,41 @@ def run_evolutionary_algorithm():
 
     for generation in range(GENERATIONS):
         print(f"Generation {generation + 1}/{GENERATIONS}")
-
+        
         # Write population to params file
         write_params_file(population, PARAMS_FILE)
-
+        from IPython import embed; embed()
         # Run simulations in parallel using GNU parallel
         subprocess.run([
-            "parallel", "--jobs", "128", "--bar", "--colsep", " ",
-            "python3 simulation_task.py --height {1} --r1 {2} --r2 {3} --r3 {4} --r4 {5} "ILE}"
+            "parallel", "--jobs", "128", "--bar", "--verbose", "--colsep", " ",
+            "python3 simulation_task.py --r1 {1} --r2 {2} --r3 {3} --r4 {4} --height {5}"
             f"--output {TEMP_DIR}/temp_{{1}}_{{2}}_{{3}}_{{4}}_{{5}}.csv",
             ":::", PARAMS_FILE
         ])
+        """
 
+        #Run simulations sequentially
+
+        for config in tqdm(population, desc=f"Running simulations for generation {generation + 1}"):
+            run_simulation_task(config, TEMP_DIR)
+
+        """
         # Aggregate results
         generation_output = f"{OUTPUT_DIR}/generation_{generation + 1}.csv"
         aggregate_results(TEMP_DIR, generation_output)
+        
+
 
         # Evaluate fitness and select top individuals
         data = pd.read_csv(generation_output)
+        #from IPython import embed; embed()
         fitness_scores = []
         for _, row in data.iterrows():
-            transmission_values = np.array(eval(row['transmission']))
+            transmission_values = np.array(row['transmission'])
             fitness = fitness_function(transmission_values)
-            fitness_scores.append((row, fitness))
+            row_dict = row.to_dict()
+            row_dict['radii list'] = ast.literal_eval(row_dict['radii list'])
+            fitness_scores.append((row_dict, fitness))
         fitness_scores.sort(key=lambda x: x[1], reverse=True)
         top_individuals = [x[0] for x in fitness_scores[:POPULATION_SIZE // 2]]
 
