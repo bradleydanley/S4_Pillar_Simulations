@@ -13,7 +13,7 @@ OUTPUT_DIR = "./evolution_results"
 TEMP_DIR = f"{OUTPUT_DIR}/temp"
 PARAMS_FILE = f"{TEMP_DIR}/params.txt"
 WAVELENGTH_RANGE = (3, 5)
-POPULATION_SIZE = 128
+POPULATION_SIZE = round(128*3/2)
 GENERATIONS = 50  # Increased from 10 to 50
 HEIGHT_RANGE = (1, 10)  # microns
 RADIUS_RANGE = (0.05 * 2.7, 0.45 * 2.7)  # microns
@@ -31,7 +31,19 @@ def fitness_function(transmission_values, wavelengths):
 def initialize_population(data_path, population_size):
     data = pd.read_csv(data_path)
     unique_configs = data[['height', 'radii list']].drop_duplicates()
-    population = unique_configs.sample(n=population_size, replace=False).to_dict('records')
+
+    # Include the configuration with the maximum transmission
+    max_transmission_row = data.loc[data['transmission'].idxmax()]
+    max_transmission_config = {
+        'height': max_transmission_row['height'],
+        'radii list': ast.literal_eval(max_transmission_row['radii list'])
+    }
+
+    # Sample the remaining population
+    remaining_population = unique_configs.sample(n=population_size - 1, replace=False).to_dict('records')
+
+    # Add the max transmission configuration to the population
+    population = [max_transmission_config] + remaining_population
     return population
 
 # Mutate a configuration
@@ -183,21 +195,58 @@ def aggregate_results_with_fitness(temp_dir, output_file):
         except Exception as e:
             print(f"Error removing temporary file {temp_file}: {e}")
 
+def load_latest_generation(output_dir):
+    """Find and load the most recent generation file, ensuring unique configurations."""
+    generation_files = [
+        f for f in os.listdir(output_dir) if re.match(r'generation2_\d+\.csv', f)
+    ]
+    if not generation_files:
+        return None  # No previous generations found
+
+    # Sort files by generation number
+    generation_files.sort(key=lambda x: int(re.search(r'\d+', x).group()))
+    latest_file = generation_files[-1]
+    print(f"Resuming from {latest_file}")
+    data = pd.read_csv(os.path.join(output_dir, latest_file))
+
+    # Deduplicate configurations based on 'height' and 'radii list'
+    unique_configs = data[['height', 'radii list']].drop_duplicates()
+    population = []
+    for _, row in unique_configs.iterrows():
+        config = {
+            'height': row['height'],
+            'radii list': ast.literal_eval(row['radii list'])
+        }
+        population.append(config)
+    return population
+
 # Run evolutionary algorithm
 def run_evolutionary_algorithm():
     os.makedirs(TEMP_DIR, exist_ok=True)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    original_population = initialize_population(DATA_PATH, POPULATION_SIZE * 2)  # Larger initial pool for diversity
-    population = original_population[:POPULATION_SIZE]  # Start with a subset of the original population
 
-    for generation in range(GENERATIONS):
-        print(f"Generation {generation + 1}/{GENERATIONS}")
+    # Initialize the original population
+    original_population = initialize_population(DATA_PATH, POPULATION_SIZE * 2)
+
+    # Attempt to load the latest generation
+    population = load_latest_generation(OUTPUT_DIR)
+    if population is None:
+        # If no previous generation exists, start with a subset of the original population
+        population = original_population[:POPULATION_SIZE]
+
+    # Determine the starting generation
+    starting_generation = len([
+        f for f in os.listdir(OUTPUT_DIR) if re.match(r'generation2_\d+\.csv', f)
+    ]) + 1
+
+    for generation in range(starting_generation, GENERATIONS + 1):
+        print(f"Generation {generation}/{GENERATIONS}")
         # Write population to params file
         write_params_file(population, PARAMS_FILE)
         # Run simulations in parallel
-        run_simulations_in_parallel(PARAMS_FILE, TEMP_DIR, f"{OUTPUT_DIR}/failed_jobs.txt", generation + 1)
+        run_simulations_in_parallel(PARAMS_FILE, TEMP_DIR, f"{OUTPUT_DIR}/failed_jobs.txt", generation)
         # Aggregate results with fitness values
-        generation_output = f"{OUTPUT_DIR}/generation_{generation + 1}.csv"
+        generation_output = f"{OUTPUT_DIR}/generation2_{generation + 1}.csv"
         aggregate_results_with_fitness(TEMP_DIR, generation_output)  # This is where the generation file is created
         # Evaluate fitness and select top individuals
         data = pd.read_csv(generation_output)
