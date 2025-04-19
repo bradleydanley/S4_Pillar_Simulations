@@ -20,12 +20,24 @@ RADIUS_RANGE = (0.05 * 2.7, 0.45 * 2.7)  # microns
 
 # Fitness function: maximize transmission peak height and duration
 def fitness_function(transmission_values, wavelengths):
-    #from IPython import embed; embed(); exit()
-    peak_height = np.max(transmission_values)
-    peak_duration = np.sum(transmission_values > 0.8 * peak_height)  # Duration above 80% of peak
-    area_under_curve = np.trapezoid(transmission_values, wavelengths)
+    """
+    Calculate the fitness of a configuration based on its transmission values and wavelengths.
+    Priority:
+    1. Higher peak transmission always results in a better fitness.
+    2. If peak transmission is the same, prioritize longer peak duration (above 90% of the peak).
+    """
+    # Calculate the peak transmission value
+    peak_transmission = np.max(transmission_values)
 
-    return round(2 * peak_height + peak_duration + area_under_curve, 6)  # Weight peak height more
+    # Calculate the duration where transmission is above 90% of the peak
+    peak_threshold = 0.9 * peak_transmission
+    peak_duration = np.sum(transmission_values >= peak_threshold)
+
+    # Combine the metrics into a hierarchical fitness score
+    # Multiply peak_transmission by a large constant to ensure it dominates the fitness value
+    fitness = round(1000 * peak_transmission + peak_duration, 6)
+
+    return fitness
 
 # Generate initial population from grid data
 def initialize_population(data_path, population_size):
